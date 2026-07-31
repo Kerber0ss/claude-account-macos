@@ -673,6 +673,7 @@ mod tests {
         assert_eq!(config["env"]["ANTHROPIC_BASE_URL"], "");
         assert_eq!(config["env"]["ANTHROPIC_MODEL"], "");
         assert_eq!(config["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "");
+        assert_eq!(config["model"], "");
         assert_eq!(
             fs::metadata(config_path).unwrap().permissions().mode() & 0o777,
             0o600

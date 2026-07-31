@@ -91,7 +91,8 @@ prints its exact path. Fill in the generated template before starting Claude:
     "ANTHROPIC_BASE_URL": "https://gateway.example/v1",
     "ANTHROPIC_MODEL": "your-model",
     "CLAUDE_CODE_SUBAGENT_MODEL": "your-model"
-  }
+  },
+  "model": ""
 }
 ```
 

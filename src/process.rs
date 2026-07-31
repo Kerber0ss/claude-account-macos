@@ -29,6 +29,8 @@ const API_CONFIG_FILE: &str = "settings.json";
 pub struct ApiConfig {
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    #[serde(default)]
+    pub model: String,
 }
 
 impl Default for ApiConfig {
@@ -40,6 +42,7 @@ impl Default for ApiConfig {
                 ("ANTHROPIC_MODEL".to_owned(), String::new()),
                 ("CLAUDE_CODE_SUBAGENT_MODEL".to_owned(), String::new()),
             ]),
+            model: String::new(),
         }
     }
 }

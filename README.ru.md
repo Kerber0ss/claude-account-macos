@@ -101,7 +101,8 @@ claude account add gateway --api
     "ANTHROPIC_BASE_URL": "https://gateway.example/v1",
     "ANTHROPIC_MODEL": "ваша-модель",
     "CLAUDE_CODE_SUBAGENT_MODEL": "ваша-модель"
-  }
+  },
+  "model": ""
 }
 ```
 
