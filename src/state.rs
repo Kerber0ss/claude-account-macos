@@ -33,10 +33,20 @@ pub struct State {
 pub struct Profile {
     pub config_dir: PathBuf,
     pub created_at: u64,
+    #[serde(default)]
+    pub authentication: Authentication,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Authentication {
+    #[default]
+    OAuth,
+    Api,
 }
 
 impl Profile {
-    pub fn new(config_dir: PathBuf) -> Self {
+    pub fn new(config_dir: PathBuf, authentication: Authentication) -> Self {
         let created_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -44,6 +54,7 @@ impl Profile {
         Self {
             config_dir,
             created_at,
+            authentication,
         }
     }
 }
@@ -168,9 +179,10 @@ mod tests {
             ..State::default()
         };
         state.active = Some("work".to_owned());
-        state
-            .profiles
-            .insert("work".to_owned(), Profile::new(paths.profile_dir("work")));
+        state.profiles.insert(
+            "work".to_owned(),
+            Profile::new(paths.profile_dir("work"), Authentication::OAuth),
+        );
 
         let _lock = StateLock::acquire(&paths).unwrap();
         save(&paths, &state).unwrap();

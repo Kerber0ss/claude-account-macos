@@ -20,8 +20,9 @@ claude
 claude "fix this bug in main.py"
 ```
 
-Вход, выход, хранение учётных данных и обновление токенов выполняет сам Claude
-Code. `claude-account` не читает и не копирует содержимое учётных данных.
+Для OAuth-профилей вход, выход, хранение учётных данных и обновление токенов
+выполняет сам Claude Code. API-профили используют отдельный `api.json` для
+каждого профиля с правами доступа только для владельца.
 
 > [!IMPORTANT]
 > Это независимый проект сообщества. Он не создан, не одобрен и не
@@ -73,11 +74,39 @@ claude account add api-billing --console
 настройку Claude Code, поэтому при следующем запуске `claude` повторный вход не
 потребуется.
 
+Если не передать способ аутентификации, `claude account add ИМЯ` предложит
+выбрать OAuth в браузере или файл API-конфигурации. Чтобы пропустить выбор и
+сразу использовать OAuth, добавьте `--oauth`.
+
 Параметры:
 
 - `--email` — подставляет адрес электронной почты в форму входа.
 - `--sso` — принудительно использует SSO-аутентификацию.
 - `--console` — использует Anthropic Console вместо подписки Claude.
+
+### Добавить API-профиль
+
+```bash
+claude account add gateway --api
+```
+
+Браузер не откроется. Команда создаст
+`~/Library/Application Support/claude-account/profiles/gateway/api.json` и
+выведет точный путь. Заполните созданный шаблон перед запуском Claude:
+
+```json
+{
+  "apiKey": "ваш-api-ключ",
+  "baseUrl": "https://gateway.example/v1",
+  "model": "ваша-модель"
+}
+```
+
+`apiKey` обязателен; `baseUrl` и `model` необязательны. Wrapper передаёт эти
+значения Claude Code через `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` и
+`ANTHROPIC_MODEL`. Endpoint должен быть совместим с API Anthropic, который
+использует Claude Code. Для endpoint только с OpenAI API понадобится
+совместимый proxy или gateway.
 
 ### Переключить аккаунт
 
@@ -143,6 +172,7 @@ claude auth status --text
 ```text
 ~/Library/Application Support/claude-account/state.json
 ~/Library/Application Support/claude-account/profiles/<имя-профиля>/
+~/Library/Application Support/claude-account/profiles/<имя-профиля>/api.json
 ~/Library/Application Support/claude-account/bin/claude
 ~/Library/Application Support/claude-account/libexec/claude-account
 ```
@@ -151,9 +181,10 @@ claude auth status --text
 `CLAUDE_ACCOUNT_HOME` позволяет разместить все данные приложения в одном
 абсолютном каталоге — это особенно удобно для тестов.
 
-В файле состояния содержатся имена профилей, пути к их каталогам и путь к
-настоящему исполняемому файлу Claude. Токены доступа и обновления в нём не
-хранятся.
+В файле состояния содержатся имена профилей, типы аутентификации, пути к их
+каталогам и путь к настоящему исполняемому файлу Claude. Токены доступа и
+обновления в нём не хранятся. API-ключ лежит только в `api.json` выбранного
+API-профиля; этот файл создаётся с правами `0600`.
 
 ## Переменные окружения для аутентификации
 
@@ -166,6 +197,10 @@ claude auth status --text
 
 Установите `CLAUDE_ACCOUNT_PRESERVE_AUTH_ENV=1`, только если намеренно хотите,
 чтобы эти переменные переопределяли аутентификацию профиля.
+
+Для API-профиля значения из `api.json` передаются процессу Claude как
+`ANTHROPIC_API_KEY` и, если заданы, как `ANTHROPIC_BASE_URL` и
+`ANTHROPIC_MODEL`.
 
 ## Разработка
 

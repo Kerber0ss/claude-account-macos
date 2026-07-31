@@ -20,8 +20,9 @@ claude
 claude "fix this bug in main.py"
 ```
 
-Claude Code itself performs login, logout, credential storage, and token
-refresh. `claude-account` never reads or copies credential contents.
+For OAuth profiles, Claude Code itself performs login, logout, credential
+storage, and token refresh. API profiles use a separate per-profile `api.json`
+file with owner-only permissions.
 
 > [!IMPORTANT]
 > This is an independent community project. It is not made, endorsed, or
@@ -68,6 +69,33 @@ This opens Claude Code's official login flow. The first profile becomes active.
 Adding another profile does not switch the active profile. The command also
 completes Claude Code's local onboarding state, so the next `claude` launch
 uses the saved login without asking you to authenticate again.
+
+When no authentication option is passed, `claude account add NAME` asks whether
+to use browser-based OAuth or an API configuration file. Use `--oauth` to skip
+the prompt and force OAuth.
+
+### Add an API profile
+
+```bash
+claude account add gateway --api
+```
+
+This does not open a browser. It creates
+`~/Library/Application Support/claude-account/profiles/gateway/api.json` and
+prints its exact path. Fill in the generated template before starting Claude:
+
+```json
+{
+  "apiKey": "your-api-key",
+  "baseUrl": "https://gateway.example/v1",
+  "model": "your-model"
+}
+```
+
+`apiKey` is required; `baseUrl` and `model` are optional. The wrapper passes
+these values as `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, and
+`ANTHROPIC_MODEL`. The endpoint must be compatible with the Anthropic API used
+by Claude Code; an OpenAI-only endpoint needs a compatible proxy or gateway.
 
 ### Switch accounts
 
@@ -132,6 +160,7 @@ By default:
 ```text
 ~/Library/Application Support/claude-account/state.json
 ~/Library/Application Support/claude-account/profiles/<name>/
+~/Library/Application Support/claude-account/profiles/<name>/api.json
 ~/Library/Application Support/claude-account/bin/claude
 ~/Library/Application Support/claude-account/libexec/claude-account
 ```
@@ -140,8 +169,10 @@ The optional `XDG_CONFIG_HOME` and `XDG_DATA_HOME` variables are respected.
 `CLAUDE_ACCOUNT_HOME` can place all application data under one absolute
 directory, which is especially useful for tests.
 
-The state file contains profile names, directory paths, and the real Claude
-executable path. It never contains access or refresh tokens.
+The state file contains profile names, authentication types, directory paths,
+and the real Claude executable path. It never contains access or refresh
+tokens. API keys are stored only in the selected API profile's `api.json`,
+which is created with `0600` permissions.
 
 ## Authentication environment variables
 
@@ -154,6 +185,9 @@ these variables from the child Claude process:
 
 Set `CLAUDE_ACCOUNT_PRESERVE_AUTH_ENV=1` if you intentionally want those
 variables to override profile authentication.
+
+For an API profile, its `api.json` supplies `ANTHROPIC_API_KEY` and, when
+configured, `ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL` to the Claude process.
 
 ## Development
 

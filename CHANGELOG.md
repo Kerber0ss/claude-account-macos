@@ -8,6 +8,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ## [Unreleased]
 
 - Ported profile isolation and installation instructions to macOS.
+- Added per-profile API configuration with custom endpoint and model support.
 
 ## [0.1.1] - 2026-07-30
 

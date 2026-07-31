@@ -1,6 +1,6 @@
 use std::env;
 use std::fs::{self, OpenOptions};
-use std::io::{ErrorKind, Write};
+use std::io::{self, ErrorKind, Write};
 use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -13,7 +13,7 @@ use serde_json::{Map, Value};
 
 use crate::paths::AppPaths;
 use crate::process;
-use crate::state::{self, Profile, StateLock};
+use crate::state::{self, Authentication, Profile, StateLock};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -28,7 +28,7 @@ pub struct AccountCli {
 
 #[derive(Debug, Subcommand)]
 enum AccountCommand {
-    /// Create a profile and open Claude Code's normal login flow
+    /// Create a profile with OAuth or API configuration
     Add {
         /// Profile name, such as work or personal
         name: String,
@@ -41,6 +41,12 @@ enum AccountCommand {
         /// Authenticate with Anthropic Console instead of a subscription
         #[arg(long)]
         console: bool,
+        /// Use browser-based Claude OAuth login
+        #[arg(long, conflicts_with = "api")]
+        oauth: bool,
+        /// Create an API configuration file instead of logging in
+        #[arg(long, conflicts_with_all = ["email", "sso", "console"])]
+        api: bool,
     },
     /// Select the profile used by future Claude processes
     Use { name: String },
@@ -77,7 +83,9 @@ impl AccountCli {
                 email,
                 sso,
                 console,
-            } => add(paths, &name, email.as_deref(), sso, console),
+                oauth,
+                api,
+            } => add(paths, &name, email.as_deref(), sso, console, oauth, api),
             AccountCommand::Use { name } => use_profile(paths, &name),
             AccountCommand::List => list(paths),
             AccountCommand::Current => current(paths),
@@ -92,7 +100,55 @@ impl AccountCli {
     }
 }
 
-fn add(paths: &AppPaths, name: &str, email: Option<&str>, sso: bool, console: bool) -> Result<()> {
+fn add(
+    paths: &AppPaths,
+    name: &str,
+    email: Option<&str>,
+    sso: bool,
+    console: bool,
+    oauth: bool,
+    api: bool,
+) -> Result<()> {
+    let authentication = if api {
+        Authentication::Api
+    } else if oauth || email.is_some() || sso || console {
+        Authentication::OAuth
+    } else {
+        select_authentication()?
+    };
+    match authentication {
+        Authentication::OAuth => add_oauth(paths, name, email, sso, console),
+        Authentication::Api => add_api(paths, name),
+    }
+}
+
+fn select_authentication() -> Result<Authentication> {
+    println!("Choose authentication for this profile:");
+    println!("  1) Claude OAuth (open a browser)");
+    println!("  2) API configuration file");
+    print!("Select [1]: ");
+    io::stdout()
+        .flush()
+        .context("failed to prompt for authentication")?;
+
+    let mut selection = String::new();
+    io::stdin()
+        .read_line(&mut selection)
+        .context("failed to read authentication choice")?;
+    match selection.trim() {
+        "" | "1" => Ok(Authentication::OAuth),
+        "2" => Ok(Authentication::Api),
+        _ => bail!("invalid choice; select 1 for OAuth or 2 for API configuration"),
+    }
+}
+
+fn add_oauth(
+    paths: &AppPaths,
+    name: &str,
+    email: Option<&str>,
+    sso: bool,
+    console: bool,
+) -> Result<()> {
     validate_profile_name(name)?;
     let current_executable = env::current_exe().context("failed to locate this executable")?;
     let existing_state = {
@@ -148,23 +204,8 @@ fn add(paths: &AppPaths, name: &str, email: Option<&str>, sso: bool, console: bo
 
     complete_claude_onboarding(&profile_dir)?;
 
-    let first_profile;
-    {
-        let _lock = StateLock::acquire(paths)?;
-        let mut state = state::load(paths)?;
-        if state.profiles.contains_key(name) {
-            bail!("profile `{name}` was added by another process");
-        }
-        first_profile = state.profiles.is_empty();
-        state.real_claude = Some(real_claude);
-        state
-            .profiles
-            .insert(name.to_owned(), Profile::new(profile_dir));
-        if first_profile {
-            state.active = Some(name.to_owned());
-        }
-        state::save(paths, &state)?;
-    }
+    let first_profile =
+        register_profile(paths, name, profile_dir, real_claude, Authentication::OAuth)?;
 
     if first_profile {
         println!("Added `{name}` and made it active.");
@@ -172,6 +213,63 @@ fn add(paths: &AppPaths, name: &str, email: Option<&str>, sso: bool, console: bo
         println!("Added `{name}`. Activate it with `claude account use {name}`.");
     }
     Ok(())
+}
+
+fn add_api(paths: &AppPaths, name: &str) -> Result<()> {
+    validate_profile_name(name)?;
+    let current_executable = env::current_exe().context("failed to locate this executable")?;
+    let existing_state = {
+        let _lock = StateLock::acquire(paths)?;
+        let state = state::load(paths)?;
+        if state.profiles.contains_key(name) {
+            bail!("profile `{name}` already exists");
+        }
+        state
+    };
+    let real_claude = process::resolve_real_claude(
+        existing_state.real_claude.as_deref(),
+        &current_executable,
+        paths,
+    )?;
+    let profile_dir = paths.profile_dir(name);
+    state::ensure_private_dir(&profile_dir)?;
+    let config_path = process::ensure_api_config(&profile_dir)?;
+    complete_claude_onboarding(&profile_dir)?;
+    let first_profile =
+        register_profile(paths, name, profile_dir, real_claude, Authentication::Api)?;
+
+    println!("Added API profile `{name}`.");
+    println!("Edit {} before using it.", config_path.display());
+    if first_profile {
+        println!("Made `{name}` active.");
+    } else {
+        println!("Activate it with `claude account use {name}`.");
+    }
+    Ok(())
+}
+
+fn register_profile(
+    paths: &AppPaths,
+    name: &str,
+    profile_dir: PathBuf,
+    real_claude: PathBuf,
+    authentication: Authentication,
+) -> Result<bool> {
+    let _lock = StateLock::acquire(paths)?;
+    let mut state = state::load(paths)?;
+    if state.profiles.contains_key(name) {
+        bail!("profile `{name}` was added by another process");
+    }
+    let first_profile = state.profiles.is_empty();
+    state.real_claude = Some(real_claude);
+    state
+        .profiles
+        .insert(name.to_owned(), Profile::new(profile_dir, authentication));
+    if first_profile {
+        state.active = Some(name.to_owned());
+    }
+    state::save(paths, &state)?;
+    Ok(first_profile)
 }
 
 #[derive(Debug, Deserialize)]
@@ -290,13 +388,17 @@ fn remove(paths: &AppPaths, name: &str, purge: bool, force: bool) -> Result<()> 
         (profile, real_claude, is_active)
     };
 
-    println!("Logging out profile `{name}`...");
-    let logout_status = process::managed_command(&real_claude, &profile.config_dir)
-        .args(["auth", "logout"])
-        .status()
-        .context("failed to start Claude logout")?;
-    if !logout_status.success() {
-        bail!("Claude logout failed; profile `{name}` was not removed");
+    if profile.authentication == Authentication::OAuth {
+        println!("Logging out profile `{name}`...");
+        let logout_status = process::managed_command(&real_claude, &profile.config_dir)
+            .args(["auth", "logout"])
+            .status()
+            .context("failed to start Claude logout")?;
+        if !logout_status.success() {
+            bail!("Claude logout failed; profile `{name}` was not removed");
+        }
+    } else {
+        process::remove_api_config(&profile.config_dir)?;
     }
 
     {
@@ -326,6 +428,11 @@ fn remove(paths: &AppPaths, name: &str, purge: bool, force: bool) -> Result<()> 
         fs::remove_dir_all(&expected)
             .with_context(|| format!("failed to purge {}", expected.display()))?;
         println!("Removed `{name}` and permanently deleted its local data.");
+    } else if profile.authentication == Authentication::Api {
+        println!(
+            "Removed `{name}`. Its API configuration was deleted; other local data remains at {}.",
+            profile.config_dir.display()
+        );
     } else {
         println!(
             "Removed `{name}`. Its non-credential data remains at {}.",
@@ -478,7 +585,7 @@ mod tests {
             state::save(&paths, &initial).unwrap();
         }
 
-        add(&paths, "work", None, false, false).unwrap();
+        add(&paths, "work", None, false, false, true, false).unwrap();
         let calls = fs::read_to_string(log).unwrap();
         let expected = paths.profile_dir("work").display().to_string();
         assert!(calls.contains(&format!("{expected}|auth login")));
@@ -537,9 +644,41 @@ mod tests {
             state::save(&paths, &initial).unwrap();
         }
 
-        let error = add(&paths, "work", None, false, false).unwrap_err();
+        let error = add(&paths, "work", None, false, false, true, false).unwrap_err();
         assert!(error.to_string().contains("did not report a valid login"));
         assert!(!state::load(&paths).unwrap().profiles.contains_key("work"));
         assert!(!paths.profile_dir("work").join(".claude.json").exists());
+    }
+
+    #[test]
+    fn api_add_creates_an_editable_connection_template() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_roots(temp.path().join("config"), temp.path().join("data"));
+        let fake_claude = temp.path().join("claude-real");
+        fs::write(&fake_claude, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&fake_claude, fs::Permissions::from_mode(0o755)).unwrap();
+
+        {
+            let _lock = StateLock::acquire(&paths).unwrap();
+            let mut initial = state::load(&paths).unwrap();
+            initial.real_claude = Some(fake_claude);
+            state::save(&paths, &initial).unwrap();
+        }
+
+        add(&paths, "gateway", None, false, false, false, true).unwrap();
+
+        let config_path = paths.profile_dir("gateway").join("api.json");
+        let config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+        assert_eq!(config["apiKey"], "");
+        assert_eq!(config["baseUrl"], "");
+        assert_eq!(config["model"], "");
+        assert_eq!(
+            fs::metadata(config_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            state::load(&paths).unwrap().profiles["gateway"].authentication,
+            Authentication::Api
+        );
     }
 }
