@@ -531,12 +531,15 @@ fn validate_profile_name(name: &str) -> Result<()> {
     let first = characters.next().context("profile name cannot be empty")?;
     if !first.is_ascii_alphanumeric()
         || !characters.all(|character| {
-            character.is_ascii_alphanumeric() || character == '-' || character == '_'
+            character.is_ascii_alphanumeric()
+                || character == '-'
+                || character == '_'
+                || character == '.'
         })
         || name.len() > 32
     {
         bail!(
-            "invalid profile name `{name}`; use 1-32 letters, numbers, hyphens, or underscores, \
+            "invalid profile name `{name}`; use 1-32 letters, numbers, dots, hyphens, or underscores, \
              starting with a letter or number"
         );
     }
@@ -552,7 +555,7 @@ mod tests {
         for invalid in ["", "../work", ".work", "work space", "work/personal"] {
             assert!(validate_profile_name(invalid).is_err(), "{invalid}");
         }
-        for valid in ["work", "personal-2", "team_account"] {
+        for valid in ["work", "personal-2", "team_account", "gemini3.6-flash"] {
             assert!(validate_profile_name(valid).is_ok(), "{valid}");
         }
     }
