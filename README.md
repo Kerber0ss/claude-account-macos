@@ -21,7 +21,7 @@ claude "fix this bug in main.py"
 ```
 
 For OAuth profiles, Claude Code itself performs login, logout, credential
-storage, and token refresh. API profiles use a separate per-profile `api.json`
+storage, and token refresh. API profiles use a separate per-profile `settings.json`
 file with owner-only permissions.
 
 > [!IMPORTANT]
@@ -81,21 +81,24 @@ claude account add gateway --api
 ```
 
 This does not open a browser. It creates
-`~/Library/Application Support/claude-account/profiles/gateway/api.json` and
+`~/Library/Application Support/claude-account/profiles/gateway/settings.json` and
 prints its exact path. Fill in the generated template before starting Claude:
 
 ```json
 {
-  "apiKey": "your-api-key",
-  "baseUrl": "https://gateway.example/v1",
-  "model": "your-model"
+  "env": {
+    "ANTHROPIC_API_KEY": "your-api-key",
+    "ANTHROPIC_BASE_URL": "https://gateway.example/v1",
+    "ANTHROPIC_MODEL": "your-model",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "your-model"
+  }
 }
 ```
 
-`apiKey` is required; `baseUrl` and `model` are optional. The wrapper passes
-these values as `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, and
-`ANTHROPIC_MODEL`. The endpoint must be compatible with the Anthropic API used
-by Claude Code; an OpenAI-only endpoint needs a compatible proxy or gateway.
+`ANTHROPIC_API_KEY` is required; `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`, and
+`CLAUDE_CODE_SUBAGENT_MODEL` are optional. Set the last value to the same model
+to make every Claude Code subagent use your gateway model. The endpoint must be compatible with the Anthropic API used by
+Claude Code; an OpenAI-only endpoint needs a compatible proxy or gateway.
 
 ### Switch accounts
 
@@ -160,7 +163,7 @@ By default:
 ```text
 ~/Library/Application Support/claude-account/state.json
 ~/Library/Application Support/claude-account/profiles/<name>/
-~/Library/Application Support/claude-account/profiles/<name>/api.json
+~/Library/Application Support/claude-account/profiles/<name>/settings.json
 ~/Library/Application Support/claude-account/bin/claude
 ~/Library/Application Support/claude-account/libexec/claude-account
 ```
@@ -171,7 +174,7 @@ directory, which is especially useful for tests.
 
 The state file contains profile names, authentication types, directory paths,
 and the real Claude executable path. It never contains access or refresh
-tokens. API keys are stored only in the selected API profile's `api.json`,
+tokens. API keys are stored only in the selected API profile's `settings.json`,
 which is created with `0600` permissions.
 
 ## Authentication environment variables
@@ -186,7 +189,7 @@ these variables from the child Claude process:
 Set `CLAUDE_ACCOUNT_PRESERVE_AUTH_ENV=1` if you intentionally want those
 variables to override profile authentication.
 
-For an API profile, its `api.json` supplies `ANTHROPIC_API_KEY` and, when
+For an API profile, its `settings.json` supplies `ANTHROPIC_API_KEY` and, when
 configured, `ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL` to the Claude process.
 
 ## Development

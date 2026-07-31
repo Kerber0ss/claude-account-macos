@@ -430,7 +430,7 @@ fn remove(paths: &AppPaths, name: &str, purge: bool, force: bool) -> Result<()> 
         println!("Removed `{name}` and permanently deleted its local data.");
     } else if profile.authentication == Authentication::Api {
         println!(
-            "Removed `{name}`. Its API configuration was deleted; other local data remains at {}.",
+            "Removed `{name}`. Its API connection values were removed from settings.json; other local data remains at {}.",
             profile.config_dir.display()
         );
     } else {
@@ -667,11 +667,12 @@ mod tests {
 
         add(&paths, "gateway", None, false, false, false, true).unwrap();
 
-        let config_path = paths.profile_dir("gateway").join("api.json");
+        let config_path = paths.profile_dir("gateway").join("settings.json");
         let config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
-        assert_eq!(config["apiKey"], "");
-        assert_eq!(config["baseUrl"], "");
-        assert_eq!(config["model"], "");
+        assert_eq!(config["env"]["ANTHROPIC_API_KEY"], "");
+        assert_eq!(config["env"]["ANTHROPIC_BASE_URL"], "");
+        assert_eq!(config["env"]["ANTHROPIC_MODEL"], "");
+        assert_eq!(config["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "");
         assert_eq!(
             fs::metadata(config_path).unwrap().permissions().mode() & 0o777,
             0o600

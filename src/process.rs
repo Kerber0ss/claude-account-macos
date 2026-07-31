@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
@@ -9,27 +10,38 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::paths::AppPaths;
 use crate::state::{self, Authentication};
 
-const AUTH_ENVIRONMENT: [&str; 5] = [
+const AUTH_ENVIRONMENT: [&str; 6] = [
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
     "CLAUDE_CODE_OAUTH_TOKEN",
 ];
-const API_CONFIG_FILE: &str = "api.json";
+const API_CONFIG_FILE: &str = "settings.json";
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ApiConfig {
-    pub api_key: String,
     #[serde(default)]
-    pub base_url: String,
-    #[serde(default)]
-    pub model: String,
+    pub env: BTreeMap<String, String>,
+}
+
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self {
+            env: BTreeMap::from([
+                ("ANTHROPIC_API_KEY".to_owned(), String::new()),
+                ("ANTHROPIC_BASE_URL".to_owned(), String::new()),
+                ("ANTHROPIC_MODEL".to_owned(), String::new()),
+                ("CLAUDE_CODE_SUBAGENT_MODEL".to_owned(), String::new()),
+            ]),
+        }
+    }
 }
 
 pub fn exec_active_profile(paths: &AppPaths, arguments: &[OsString]) -> Result<()> {
@@ -91,11 +103,35 @@ pub fn ensure_api_config(config_dir: &Path) -> Result<PathBuf> {
 
 pub fn remove_api_config(config_dir: &Path) -> Result<()> {
     let path = api_config_path(config_dir);
-    match fs::remove_file(&path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error).with_context(|| format!("failed to remove {}", path.display())),
+    let contents = match fs::read(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", path.display()))
+        }
+    };
+    let mut settings: Value = serde_json::from_slice(&contents)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+    let settings = settings
+        .as_object_mut()
+        .with_context(|| format!("{} must contain a JSON object", path.display()))?;
+    if let Some(env) = settings.get_mut("env") {
+        let env = env
+            .as_object_mut()
+            .with_context(|| format!("{}.env must contain a JSON object", path.display()))?;
+        for variable in [
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_MODEL",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+        ] {
+            env.remove(variable);
+        }
+        if env.is_empty() {
+            settings.remove("env");
+        }
     }
+    save_settings(&path, settings)
 }
 
 fn managed_api_command(real_claude: &Path, config_dir: &Path) -> Result<Command> {
@@ -105,24 +141,71 @@ fn managed_api_command(real_claude: &Path, config_dir: &Path) -> Result<Command>
             .with_context(|| format!("failed to read {}", config_path.display()))?,
     )
     .with_context(|| format!("failed to parse {}", config_path.display()))?;
-    let api_key = config.api_key.trim();
+    let api_key = config
+        .env
+        .get("ANTHROPIC_API_KEY")
+        .map(String::as_str)
+        .unwrap_or_default()
+        .trim();
     if api_key.is_empty() {
         bail!("API key is empty; edit {}", config_path.display());
     }
 
     let mut command = managed_command(real_claude, config_dir);
     command.env("ANTHROPIC_API_KEY", api_key);
-    if !config.base_url.trim().is_empty() {
-        command.env("ANTHROPIC_BASE_URL", config.base_url.trim());
+    if let Some(base_url) = config
+        .env
+        .get("ANTHROPIC_BASE_URL")
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
+        command.env("ANTHROPIC_BASE_URL", base_url.trim());
     }
-    if !config.model.trim().is_empty() {
-        command.env("ANTHROPIC_MODEL", config.model.trim());
+    if let Some(model) = config
+        .env
+        .get("ANTHROPIC_MODEL")
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
+        command.env("ANTHROPIC_MODEL", model.trim());
+    }
+    if let Some(model) = config
+        .env
+        .get("CLAUDE_CODE_SUBAGENT_MODEL")
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
+        command.env("CLAUDE_CODE_SUBAGENT_MODEL", model.trim());
     }
     Ok(command)
 }
 
 pub fn api_config_path(config_dir: &Path) -> PathBuf {
     config_dir.join(API_CONFIG_FILE)
+}
+
+fn save_settings(path: &Path, settings: &serde_json::Map<String, Value>) -> Result<()> {
+    let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
+    let result = (|| -> Result<()> {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&temporary)
+            .with_context(|| format!("failed to create {}", temporary.display()))?;
+        serde_json::to_writer_pretty(&mut file, settings).context("failed to write settings")?;
+        file.write_all(b"\n").context("failed to finish settings")?;
+        file.sync_all().context("failed to sync settings")?;
+        fs::rename(&temporary, path)
+            .with_context(|| format!("failed to replace {}", path.display()))?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("failed to protect {}", path.display()))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 pub fn managed_command(real_claude: &Path, config_dir: &Path) -> Command {
@@ -206,7 +289,7 @@ mod tests {
         let fake_claude = temp.path().join("claude");
         fs::write(
             &fake_claude,
-            "#!/bin/sh\nprintf '%s|%s|%s' \"$ANTHROPIC_API_KEY\" \"$ANTHROPIC_BASE_URL\" \"$ANTHROPIC_MODEL\"\n",
+            "#!/bin/sh\nprintf '%s|%s|%s|%s' \"$ANTHROPIC_API_KEY\" \"$ANTHROPIC_BASE_URL\" \"$ANTHROPIC_MODEL\" \"$CLAUDE_CODE_SUBAGENT_MODEL\"\n",
         )
         .unwrap();
         fs::set_permissions(&fake_claude, fs::Permissions::from_mode(0o755)).unwrap();
@@ -216,7 +299,7 @@ mod tests {
         let config_path = ensure_api_config(&config_dir).unwrap();
         fs::write(
             config_path,
-            r#"{"apiKey":"gateway-key","baseUrl":"https://gateway.example/v1","model":"custom-model"}"#,
+            r#"{"env":{"ANTHROPIC_API_KEY":"gateway-key","ANTHROPIC_BASE_URL":"https://gateway.example/v1","ANTHROPIC_MODEL":"custom-model","CLAUDE_CODE_SUBAGENT_MODEL":"custom-model"}}"#,
         )
         .unwrap();
 
@@ -226,7 +309,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             String::from_utf8(output.stdout).unwrap(),
-            "gateway-key|https://gateway.example/v1|custom-model"
+            "gateway-key|https://gateway.example/v1|custom-model|custom-model"
         );
     }
 }

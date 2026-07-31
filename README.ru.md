@@ -21,7 +21,7 @@ claude "fix this bug in main.py"
 ```
 
 Для OAuth-профилей вход, выход, хранение учётных данных и обновление токенов
-выполняет сам Claude Code. API-профили используют отдельный `api.json` для
+выполняет сам Claude Code. API-профили используют отдельный `settings.json` для
 каждого профиля с правами доступа только для владельца.
 
 > [!IMPORTANT]
@@ -91,20 +91,23 @@ claude account add gateway --api
 ```
 
 Браузер не откроется. Команда создаст
-`~/Library/Application Support/claude-account/profiles/gateway/api.json` и
+`~/Library/Application Support/claude-account/profiles/gateway/settings.json` и
 выведет точный путь. Заполните созданный шаблон перед запуском Claude:
 
 ```json
 {
-  "apiKey": "ваш-api-ключ",
-  "baseUrl": "https://gateway.example/v1",
-  "model": "ваша-модель"
+  "env": {
+    "ANTHROPIC_API_KEY": "ваш-api-ключ",
+    "ANTHROPIC_BASE_URL": "https://gateway.example/v1",
+    "ANTHROPIC_MODEL": "ваша-модель",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "ваша-модель"
+  }
 }
 ```
 
-`apiKey` обязателен; `baseUrl` и `model` необязательны. Wrapper передаёт эти
-значения Claude Code через `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` и
-`ANTHROPIC_MODEL`. Endpoint должен быть совместим с API Anthropic, который
+`ANTHROPIC_API_KEY` обязателен; `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL` и
+`CLAUDE_CODE_SUBAGENT_MODEL` необязательны. Укажите для последнего ту же модель,
+чтобы все подагенты Claude Code работали через вашу gateway-модель. Endpoint должен быть совместим с API Anthropic, который
 использует Claude Code. Для endpoint только с OpenAI API понадобится
 совместимый proxy или gateway.
 
@@ -172,7 +175,7 @@ claude auth status --text
 ```text
 ~/Library/Application Support/claude-account/state.json
 ~/Library/Application Support/claude-account/profiles/<имя-профиля>/
-~/Library/Application Support/claude-account/profiles/<имя-профиля>/api.json
+~/Library/Application Support/claude-account/profiles/<имя-профиля>/settings.json
 ~/Library/Application Support/claude-account/bin/claude
 ~/Library/Application Support/claude-account/libexec/claude-account
 ```
@@ -183,7 +186,7 @@ claude auth status --text
 
 В файле состояния содержатся имена профилей, типы аутентификации, пути к их
 каталогам и путь к настоящему исполняемому файлу Claude. Токены доступа и
-обновления в нём не хранятся. API-ключ лежит только в `api.json` выбранного
+обновления в нём не хранятся. API-ключ лежит только в `settings.json` выбранного
 API-профиля; этот файл создаётся с правами `0600`.
 
 ## Переменные окружения для аутентификации
@@ -198,7 +201,7 @@ API-профиля; этот файл создаётся с правами `0600
 Установите `CLAUDE_ACCOUNT_PRESERVE_AUTH_ENV=1`, только если намеренно хотите,
 чтобы эти переменные переопределяли аутентификацию профиля.
 
-Для API-профиля значения из `api.json` передаются процессу Claude как
+Для API-профиля значения из `settings.json` передаются процессу Claude как
 `ANTHROPIC_API_KEY` и, если заданы, как `ANTHROPIC_BASE_URL` и
 `ANTHROPIC_MODEL`.
 
