@@ -4,6 +4,8 @@
 
 [Русская версия](README.ru.md)
 
+This repository is a fork of [`hamzarehmandeveloper/claude-account`](https://github.com/hamzarehmandeveloper/claude-account/tree/main).
+
 A macOS profile switcher for Claude Code. It gives Claude Code an isolated
 `CLAUDE_CONFIG_DIR` for each account and transparently forwards normal commands
 to the official Claude executable.

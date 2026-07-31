@@ -4,6 +4,8 @@
 
 [English version](README.md)
 
+Этот репозиторий является форком [`hamzarehmandeveloper/claude-account`](https://github.com/hamzarehmandeveloper/claude-account/tree/main).
+
 Переключатель аккаунтов Claude Code для macOS. Он создаёт отдельный
 `CLAUDE_CONFIG_DIR` для каждого аккаунта и незаметно перенаправляет обычные
 команды в официальный исполняемый файл Claude.
