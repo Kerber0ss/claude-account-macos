@@ -127,19 +127,17 @@ claude account current
 claude account remove personal
 ```
 
-This runs Claude Code's official `auth logout` inside the profile and
-unregisters it. Settings and session history are preserved, allowing the same
-profile name to reuse them later.
-
-To delete all local data belonging to the profile:
+This runs Claude Code's official `auth logout` for OAuth profiles, unregisters
+the profile, and permanently deletes its directory, including settings,
+sessions, plugins, and history. API profiles are deleted without OAuth logout.
+The older flags remain accepted for compatibility:
 
 ```bash
 claude account remove personal --purge --yes
 ```
 
 Removing the active profile is refused unless `--force` is supplied.
-`--purge` permanently deletes that profile's settings, sessions, plugins, and
-history in addition to its stored login.
+Local data is deleted with or without `--purge --yes`.
 
 ### Get help
 

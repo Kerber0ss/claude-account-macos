@@ -84,7 +84,7 @@ fn complete_macos_profile_lifecycle() {
     assert!(forwarded.contains(account_home.join("profiles/personal").to_str().unwrap()));
 
     run(&shim, &account_home, &["account", "remove", "work"]);
-    assert!(account_home.join("profiles/work").is_dir());
+    assert!(!account_home.join("profiles/work").exists());
 
     run(
         &shim,
@@ -94,6 +94,38 @@ fn complete_macos_profile_lifecycle() {
         ],
     );
     assert!(!account_home.join("profiles/personal").exists());
+
+    run(
+        &shim,
+        &account_home,
+        &["account", "add", "gateway", "--api"],
+    );
+    let rejected = Command::new(&shim)
+        .env("CLAUDE_ACCOUNT_HOME", &account_home)
+        .args(["account", "remove", "gateway"])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(account_home.join("profiles/gateway").is_dir());
+    run(
+        &shim,
+        &account_home,
+        &["account", "remove", "gateway", "--force"],
+    );
+    assert!(!account_home.join("profiles/gateway").exists());
+
+    run(&shim, &account_home, &["account", "add", "linked", "--api"]);
+    let linked = account_home.join("profiles/linked");
+    let preserved = temp.path().join("preserved");
+    fs::rename(&linked, &preserved).unwrap();
+    std::os::unix::fs::symlink(&preserved, &linked).unwrap();
+    let rejected = Command::new(&shim)
+        .env("CLAUDE_ACCOUNT_HOME", &account_home)
+        .args(["account", "remove", "linked", "--force"])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(preserved.join("settings.json").exists());
 
     let logged_calls = fs::read_to_string(calls).unwrap();
     assert!(logged_calls.contains("profiles/work||auth login"));

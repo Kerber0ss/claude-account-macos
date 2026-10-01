@@ -54,13 +54,13 @@ enum AccountCommand {
     List,
     /// Print only the active profile name
     Current,
-    /// Log out and unregister a profile
+    /// Log out and permanently delete a profile and its local data
     Remove {
         name: String,
-        /// Also delete settings, sessions, plugins, and history
+        /// Compatibility flag; local data is now always deleted
         #[arg(long, requires = "yes")]
         purge: bool,
-        /// Confirm permanent deletion with --purge
+        /// Compatibility confirmation for --purge
         #[arg(long)]
         yes: bool,
         /// Allow removing the active profile
@@ -89,12 +89,7 @@ impl AccountCli {
             AccountCommand::Use { name } => use_profile(paths, &name),
             AccountCommand::List => list(paths),
             AccountCommand::Current => current(paths),
-            AccountCommand::Remove {
-                name,
-                purge,
-                yes: _,
-                force,
-            } => remove(paths, &name, purge, force),
+            AccountCommand::Remove { name, force, .. } => remove(paths, &name, force),
             AccountCommand::Install { real } => install(paths, real.as_deref()),
         }
     }
@@ -365,11 +360,11 @@ fn current(paths: &AppPaths) -> Result<()> {
     }
 }
 
-fn remove(paths: &AppPaths, name: &str, purge: bool, force: bool) -> Result<()> {
+fn remove(paths: &AppPaths, name: &str, force: bool) -> Result<()> {
     validate_profile_name(name)?;
+    let _lock = StateLock::acquire(paths)?;
+    let mut state = state::load(paths)?;
     let (profile, real_claude, is_active) = {
-        let _lock = StateLock::acquire(paths)?;
-        let state = state::load(paths)?;
         let profile = state
             .profiles
             .get(name)
@@ -388,6 +383,21 @@ fn remove(paths: &AppPaths, name: &str, purge: bool, force: bool) -> Result<()> 
         (profile, real_claude, is_active)
     };
 
+    let expected = paths.profile_dir(name);
+    if profile.config_dir != expected {
+        bail!(
+            "refusing to delete unexpected directory {}; expected {}",
+            profile.config_dir.display(),
+            expected.display()
+        );
+    }
+    let directory_exists = match fs::symlink_metadata(&expected) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => true,
+        Ok(_) => bail!("refusing to delete a symlink or non-directory"),
+        Err(error) if error.kind() == ErrorKind::NotFound => false,
+        Err(error) => return Err(error).context("failed to inspect profile directory"),
+    };
+
     if profile.authentication == Authentication::OAuth {
         println!("Logging out profile `{name}`...");
         let logout_status = process::managed_command(&real_claude, &profile.config_dir)
@@ -397,48 +407,18 @@ fn remove(paths: &AppPaths, name: &str, purge: bool, force: bool) -> Result<()> 
         if !logout_status.success() {
             bail!("Claude logout failed; profile `{name}` was not removed");
         }
-    } else {
-        process::remove_api_config(&profile.config_dir)?;
     }
 
-    {
-        let _lock = StateLock::acquire(paths)?;
-        let mut state = state::load(paths)?;
-        state.profiles.remove(name);
-        if is_active && state.active.as_deref() == Some(name) {
-            state.active = None;
-        }
-        state::save(paths, &state)?;
-    }
-
-    if purge {
-        let expected = paths.profile_dir(name);
-        if profile.config_dir != expected {
-            bail!(
-                "refusing to purge unexpected directory {}; expected {}",
-                profile.config_dir.display(),
-                expected.display()
-            );
-        }
-        let metadata = fs::symlink_metadata(&expected)
-            .with_context(|| format!("failed to inspect {}", expected.display()))?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            bail!("refusing to purge a symlink or non-directory");
-        }
+    if directory_exists {
         fs::remove_dir_all(&expected)
-            .with_context(|| format!("failed to purge {}", expected.display()))?;
-        println!("Removed `{name}` and permanently deleted its local data.");
-    } else if profile.authentication == Authentication::Api {
-        println!(
-            "Removed `{name}`. Its API connection values were removed from settings.json; other local data remains at {}.",
-            profile.config_dir.display()
-        );
-    } else {
-        println!(
-            "Removed `{name}`. Its non-credential data remains at {}.",
-            profile.config_dir.display()
-        );
+            .with_context(|| format!("failed to delete {}", expected.display()))?;
     }
+    state.profiles.remove(name);
+    if is_active {
+        state.active = None;
+    }
+    state::save(paths, &state)?;
+    println!("Removed `{name}` and permanently deleted its local data.");
     Ok(())
 }
 
@@ -461,6 +441,13 @@ fn install(paths: &AppPaths, explicit_real: Option<&Path>) -> Result<()> {
 
     state::ensure_private_dir(&paths.data_dir)?;
     state::ensure_private_dir(&paths.shim_dir)?;
+    let defaults_script = paths.shim_dir.join("claude-defaults-sync.sh");
+    fs::write(
+        &defaults_script,
+        include_str!("../scripts/claude-defaults-sync.sh"),
+    )
+    .context("failed to install profile defaults script")?;
+    fs::set_permissions(&defaults_script, fs::Permissions::from_mode(0o700))?;
     let libexec_dir = paths
         .installed_executable
         .parent()

@@ -10,7 +10,6 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::paths::AppPaths;
 use crate::state::{self, Authentication};
@@ -104,39 +103,6 @@ pub fn ensure_api_config(config_dir: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
-pub fn remove_api_config(config_dir: &Path) -> Result<()> {
-    let path = api_config_path(config_dir);
-    let contents = match fs::read(&path) {
-        Ok(contents) => contents,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(error).with_context(|| format!("failed to read {}", path.display()))
-        }
-    };
-    let mut settings: Value = serde_json::from_slice(&contents)
-        .with_context(|| format!("failed to parse {}", path.display()))?;
-    let settings = settings
-        .as_object_mut()
-        .with_context(|| format!("{} must contain a JSON object", path.display()))?;
-    if let Some(env) = settings.get_mut("env") {
-        let env = env
-            .as_object_mut()
-            .with_context(|| format!("{}.env must contain a JSON object", path.display()))?;
-        for variable in [
-            "ANTHROPIC_API_KEY",
-            "ANTHROPIC_BASE_URL",
-            "ANTHROPIC_MODEL",
-            "CLAUDE_CODE_SUBAGENT_MODEL",
-        ] {
-            env.remove(variable);
-        }
-        if env.is_empty() {
-            settings.remove("env");
-        }
-    }
-    save_settings(&path, settings)
-}
-
 fn managed_api_command(real_claude: &Path, config_dir: &Path) -> Result<Command> {
     let config_path = api_config_path(config_dir);
     let config: ApiConfig = serde_json::from_slice(
@@ -185,30 +151,6 @@ fn managed_api_command(real_claude: &Path, config_dir: &Path) -> Result<Command>
 
 pub fn api_config_path(config_dir: &Path) -> PathBuf {
     config_dir.join(API_CONFIG_FILE)
-}
-
-fn save_settings(path: &Path, settings: &serde_json::Map<String, Value>) -> Result<()> {
-    let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
-    let result = (|| -> Result<()> {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .mode(0o600)
-            .open(&temporary)
-            .with_context(|| format!("failed to create {}", temporary.display()))?;
-        serde_json::to_writer_pretty(&mut file, settings).context("failed to write settings")?;
-        file.write_all(b"\n").context("failed to finish settings")?;
-        file.sync_all().context("failed to sync settings")?;
-        fs::rename(&temporary, path)
-            .with_context(|| format!("failed to replace {}", path.display()))?;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-            .with_context(|| format!("failed to protect {}", path.display()))?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
 }
 
 pub fn managed_command(real_claude: &Path, config_dir: &Path) -> Command {
